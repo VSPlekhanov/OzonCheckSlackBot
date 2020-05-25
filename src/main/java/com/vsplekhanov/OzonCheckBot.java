@@ -14,29 +14,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @JBot
 public class OzonCheckBot extends Bot {
     private static final String START = "старт";
-    private static final String TEST_START = "test";
     private static final String STOP = "стоп";
     private static final String HEADLESS_OFF = "показать";
     private static final String HEADLESS_ON = "скрыть";
     private static final String PASS = "********";
     private static final String LOGIN = "*******@***.com";
 
-    private static DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static Logger log = LoggerFactory.getLogger(OzonCheckBot.class);
 
     private volatile boolean headless = true;
     private String lectureNum;
-    private String startDate;
-    private int count;
     private int day;
-    private List<String> dates;
     private volatile boolean running;
 
     private void checkExit(WebSocketSession session, Event event) {
