@@ -6,8 +6,6 @@ import me.ramswaroop.jbot.core.common.JBot;
 import me.ramswaroop.jbot.core.slack.Bot;
 import me.ramswaroop.jbot.core.slack.models.Event;
 import org.openqa.selenium.By;
-import org.openqa.selenium.InvalidElementStateException;
-import org.openqa.selenium.Keys;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -18,13 +16,7 @@ import org.springframework.web.socket.WebSocketSession;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 @JBot
 public class OzonCheckBot extends Bot {
@@ -34,16 +26,16 @@ public class OzonCheckBot extends Bot {
     private static final String HEADLESS_OFF = "показать";
     private static final String HEADLESS_ON = "скрыть";
     private static final String PASS = "********";
-    private static final String LOGIN = "***********";
-    private static final int MILLIS_TO_SLEEP = 5000;
+    private static final String LOGIN = "*******@***.com";
+
     private static DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static Logger log = LoggerFactory.getLogger(OzonCheckBot.class);
 
     private volatile boolean headless = true;
-    private String orderId;
+    private String lectureNum;
     private String startDate;
     private int count;
-    private int period;
+    private int day;
     private List<String> dates;
     private volatile boolean running;
 
@@ -59,7 +51,7 @@ public class OzonCheckBot extends Bot {
     @Controller(pattern = "\\?", events = EventType.DIRECT_MESSAGE)
     public void help(WebSocketSession session, Event event) {
         checkExit(session, event);
-        String message = "Привет, я могу проверять доступность доставок для Ozon по номеру заказа и диапазону дат."
+        String message = "Привет, я могу проверять доступность Ссылки для нажатия на сайте бонча"
                 + "\nДоступные команды: "
                 + "\n" + START + " - Начать новую проверку"
                 + "\n" + STOP + " - Завершить работу программы"
@@ -68,24 +60,6 @@ public class OzonCheckBot extends Bot {
                 + "\n? - Показать доступные команды";
 
         reply(session, event, message);
-    }
-
-
-    @Controller(pattern = TEST_START, events = EventType.DIRECT_MESSAGE)
-    public void test(WebSocketSession session, Event event) {
-        checkExit(session, event);
-        log.debug("Test");
-        orderId = "43902764";
-        LocalDate date1 = LocalDate.parse("25.06.2020", FORMATTER);
-        count = 1;
-        running = true;
-        dates = IntStream.iterate(0, i -> i + 1)
-                .limit(15)
-                .mapToObj(date1::plusDays)
-                .map(date -> date.format(FORMATTER))
-                .collect(Collectors.toList());
-        startCheckLoop(session, event);
-
     }
 
     @Controller(pattern = HEADLESS_ON, events = EventType.DIRECT_MESSAGE)
@@ -115,131 +89,52 @@ public class OzonCheckBot extends Bot {
         checkExit(session, event);
         if (running) {
             log.debug("Trying to start second thread");
-            reply(session, event, "Я не могу проверять 2 заказа одновременно");
+            reply(session, event, "Я не могу проверять 2 ссылки одновременно");
             stopConversation(event);
         } else {
             running = true;
             startConversation(event, "getOrderId");   // start conversation
             log.debug("Started by user");
-            reply(session, event, "Привет, какой номер заказа нужно проверить?");
+            reply(session, event, "Привет, какой номер лекции нужно проверить? (как в расписании)");
         }
     }
 
 
-    @Controller(next = "getStartDate", events = EventType.DIRECT_MESSAGE, pattern = "\\d+")
+    @Controller(next = "getStartDate", events = EventType.DIRECT_MESSAGE, pattern = "\\d")
     public void getOrderId(WebSocketSession session, Event event) {
         checkExit(session, event);
         if (event.getText().matches("\\d+$")) {
-            orderId = event.getText().trim();
-            reply(session, event, "Отлично, с какого числа начать проверять? (через точку, например 01.01.2021)");
-            log.debug("Get order id: " + orderId);
+            lectureNum = event.getText().trim();
             nextConversation(event);
+            reply(session, event, "Отлично, какой сегодня день месяца");
+            log.debug("Get lecture num: " + lectureNum);
         } else {
             reply(session, event, "Что-то не то, может опечатка?\nПопробуй ввести еще раз.");
             nextConversation("getOrderId");
         }
     }
 
-    @Controller(next = "getEndDate", events = EventType.DIRECT_MESSAGE, pattern = "\\d{2}.\\d{2}.\\d{4}$")
+    @Controller(events = EventType.DIRECT_MESSAGE, pattern = "\\d+")
     public void getStartDate(WebSocketSession session, Event event) {
         checkExit(session, event);
-        if (event.getText().matches("\\d{2}.\\d{2}.\\d{4}$")) {
-            reply(session, event, "Хорошо, до какого числа проверять? (максимум 90 дней)");
-            startDate = event.getText().trim();
-            log.debug("Get start date: " + startDate);
-            nextConversation(event);
+        if (event.getText().matches("\\d+$")) {
+            day = Integer.parseInt(event.getText().trim());
+            startCheckLoop(session, event);
         } else {
             reply(session, event, "Что-то не то, может опечатка?\nПопробуй ввести еще раз.");
             nextConversation("getStartDate");
-        }
-
-    }
-
-    @Controller(next = "getCount", events = EventType.DIRECT_MESSAGE, pattern = "\\d{2}.\\d{2}.\\d{4}$")
-    public void getEndDate(WebSocketSession session, Event event) {
-        checkExit(session, event);
-        if (event.getText().matches("\\d{2}.\\d{2}.\\d{4}$")) {
-            String endDate = event.getText().trim();
-
-            LocalDate date1 = LocalDate.parse(startDate, FORMATTER);
-            LocalDate date2 = LocalDate.parse(endDate, FORMATTER);
-
-            long duration = ChronoUnit.DAYS.between(date1, date2);
-            if (duration < 1) {
-                reply(session, event, "Неправильный порядок дат, введи первую дату еще раз");
-                nextConversation("getStartDate");
-                return;
-            }
-            log.debug("Get end date: " + endDate);
-            log.debug("Duration: " + duration);
-            reply(session, event, "Выбран период в " + duration + " дней.\nСколько раз повторять проверку?");
-            dates = IntStream.iterate(0, i -> i + 1)
-                    .limit(duration + 1)
-                    .mapToObj(date1::plusDays)
-                    .map(date -> date.format(FORMATTER))
-                    .collect(Collectors.toList());
-
-            nextConversation(event);
-        } else {
-            reply(session, event, "Что-то не то, может опечатка?\nПопробуй ввести еще раз.");
-            nextConversation("getEndDate");
-        }
-    }
-
-    @Controller(next = "getPeriod", events = EventType.DIRECT_MESSAGE, pattern = "\\d+$")
-    public void getCount(WebSocketSession session, Event event) {
-        checkExit(session, event);
-
-        if (event.getText().matches("\\d+$")) {
-            count = Integer.parseInt(event.getText().trim());
-            if (count == 1) {
-                startCheckLoop(session, event);
-            } else if (count < 0) {
-                reply(session, event, "Что-то не то, может опечатка?\nПопробуй ввести еще раз.");
-                nextConversation("getCount");
-            } else {
-                log.debug("get count: " + count);
-                reply(session, event, "Принято, как часто проверять? (сколько минут между проверками?)");
-                nextConversation(event);
-            }
-        } else {
-            reply(session, event, "Что-то не то, может опечатка?\nПопробуй ввести еще раз.");
-            nextConversation("getCount");
         }
     }
 
     private void startCheckLoop(WebSocketSession session, Event event) {
         reply(session, event, "Окей, начинаю проверку.\nЧтобы завершить напиши \"стоп\"");
         log.debug("Start check");
-        for (int i = 0; i < count; i++) {
-            startCheck(session, event);
+        startCheck(session, event);
 
-            if (i > count - 1) {
-                try {
-                    Thread.sleep(TimeUnit.MINUTES.toMillis(period));
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        running = false;
         reply(session, event, "Проверка закончена, чтобы начать новую напиши \"старт\"");
         stopConversation(event);
     }
 
-    @Controller(events = EventType.DIRECT_MESSAGE, pattern = "\\d+$")
-    public void getPeriod(WebSocketSession session, Event event) {
-        checkExit(session, event);
-
-        if (event.getText().matches("\\d+$")) {
-            period = Integer.parseInt(event.getText().trim());
-            startCheckLoop(session, event);
-        } else {
-            reply(session, event, "Что-то не то, может опечатка?\nПопробуй ввести еще раз.");
-            nextConversation("getPeriod");
-        }
-    }
 
     @Controller(pattern = STOP, next = "getOrderId", events = EventType.DIRECT_MESSAGE)
     public void stop(WebSocketSession session, Event event) {
@@ -259,12 +154,12 @@ public class OzonCheckBot extends Bot {
             }
             log.debug("Driver is created");
 
-            driver.get("https://seller.ozon.ru/signin");
-            WebElement userName = driver.findElement(By.name("userName"));
+            driver.get("https://lk.sut.ru/");
+            WebElement userName = driver.findElement(By.name("users"));
             userName.sendKeys(LOGIN);
-            WebElement password = driver.findElement(By.name("password"));
+            WebElement password = driver.findElement(By.name("parole"));
             password.sendKeys(PASS);
-            password.sendKeys(Keys.ENTER);
+            driver.findElement(By.name("logButton")).click();
             log.debug("Logged in");
 
             doCheck(session, event, driver);
@@ -276,79 +171,89 @@ public class OzonCheckBot extends Bot {
     }
 
     private void doCheck(WebSocketSession session, Event event, WebDriver driver) {
-        try {
-            String targetUrl = "https://seller.ozon.ru/supply/orders?tab=approved";
-            while (!targetUrl.equals(driver.getCurrentUrl())) {
-                waitCoupleOfSec(1);
-                driver.get(targetUrl);
+        clickOn(driver, By.className("title_item"));
+        clickOn(driver, By.id("menu_li_807"));
+
+        waitCoupleOfSec(2);
+
+        List<WebElement> tableRows = driver.findElements(By.xpath("/html/body/div/div/table[2]/tbody/tr"));
+        while (tableRows.isEmpty()) {
+            waitCoupleOfSec(1);
+            tableRows = driver.findElements(By.xpath("/html/body/div/div/table[2]/tbody/tr"));
+        }
+
+        int currDayId = -1;
+        for (int i = 0; i < tableRows.size(); i++) {
+            String text = tableRows.get(i).getText();
+            if (text != null && text.matches("\\W+\\n\\d+.\\d+.\\d+") && text.split("\n").length > 1
+                    && text.split("\n")[1].startsWith(String.valueOf(day))) {
+                currDayId = i;
+                break;
             }
+        }
 
+        if (currDayId < 0) {
+            reply(session, event, "Не могу найти такого дня в расписании");
+            running = false;
+            return;
+        }
 
-            List<String> foundDates = new ArrayList<>();
-            List<WebElement> elements = new ArrayList<>();
-
-            while (elements.isEmpty()) {
-                waitCoupleOfSec(5);
-                elements = driver.findElements(By.xpath("/html/body/div/div/main/div/div/div/div/div/div/div/div/div/div/div/div/table/tbody/tr"));
+        int currLectureId = -1;
+        for (int i = currDayId; i < Math.min(currDayId + 6, tableRows.size()); i++) {
+            String text = tableRows.get(i).getText();
+            if (text.startsWith(String.valueOf(lectureNum))) {
+                currLectureId = i;
+                break;
             }
+        }
 
-            log.debug("found " + elements.size() + " elements on page");
 
-            Optional<WebElement> first = elements.stream()
-                    .filter(webElement -> webElement.getText() != null && webElement.getText().startsWith(orderId))
-                    .findFirst();
-            if (first.isPresent()) {
-                log.debug("found target order");
+        if (currLectureId < 0) {
+            reply(session, event, "Не могу найти такой лекции в расписании");
+            running = false;
+            return;        }
 
-                first.get().findElements(By.xpath("td")).get(3).click();
-                List<WebElement> inputList = new ArrayList<>();
+        while (running) {
+            try {
+                driver.navigate().refresh();
+                clickOn(driver, By.className("title_item"));
+                clickOn(driver, By.id("menu_li_807"));
 
-                while (inputList.isEmpty()) {
+                tableRows = driver.findElements(By.xpath("/html/body/div/div/table[2]/tbody/tr"));
+                while (tableRows.isEmpty()) {
                     waitCoupleOfSec(1);
-                    inputList = driver.findElements(By.className("__input"));
+                    tableRows = driver.findElements(By.xpath("/html/body/div/div/table[2]/tbody/tr"));
                 }
 
-                WebElement input = inputList.get(0);
-                for (String date : dates) {
-                    input.sendKeys(date);
-                    List<WebElement> busyBoxList = driver.findElements(By.className("busy-box_pending"));
-
-                    while (!busyBoxList.isEmpty()){
-                        waitCoupleOfSec(1);
-                        busyBoxList = driver.findElements(By.className("busy-box_pending"));
-                    }
-
-                    if (!driver.findElements(By.className("vs__input")).isEmpty()) {
-                        foundDates.add(date);
-                        log.debug("found date: " + date);
-                    }
-
-                    input.clear();
+                String text = tableRows.get(currLectureId).getText();
+                if (text.contains("Ссылка")) {
+                    reply(session, event, "Ссылка готова!");
+                    running = false;
+                    return;
+                } else if (text.contains("Начать занятие")) {
+                    reply(session, event, "Можно начать занятие!");
+                } else {
+                    log.warn("link is still not here...");
                 }
-
-            } else {
-                reply(session, event, "Не могу найти такого заказа: " + orderId);
-                return;
+            } catch (Exception e) {
+                log.error(e.getMessage() + "  Exception... (maybe site is too slow)");
+                e.printStackTrace();
             }
-
-            if (foundDates.isEmpty()) {
-                reply(session, event, "Для выбранных дат нет доставок :(");
-            } else {
-                reply(session, event, "Доступные даты: " + String.join(", ", foundDates));
-                foundDates.clear();
-            }
-        } catch (Exception e) {
-            if (e.getCause() != null && InvalidElementStateException.class.equals(e.getCause().getClass())) {
-                log.error(e.getMessage());
-                doCheck(session, event, driver);
-            } else {
-                log.error(e.getMessage());
-            }
+            waitCoupleOfSec(10);
         }
     }
 
+    private void clickOn(WebDriver driver, By by) {
+        List<WebElement> collapse = driver.findElements(by);
+        while (collapse.isEmpty()) {
+            waitCoupleOfSec(1);
+            collapse = driver.findElements(by);
+        }
+        collapse.get(0).click();
+    }
+
     public String getSlackToken() {
-        return "xoxb-1122716004583-1137534900578-kkNwMIKc2oqqDX5UyAAb90pY";
+        return "xoxb-1122716004583-1140477999717-DN9DTXugCMAgYLXnFMtovs4x";
     }
 
     public Bot getSlackBot() {
